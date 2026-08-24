@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish-orb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CircleCI CLI
+        run: |
+          set -euo pipefail
+          curl -fLSs https://raw.githubusercontent.com/CircleCI-Public/circleci-cli/main/install.sh | sudo bash
+
+      - name: Derive orb version from tag
+        id: tag
+        run: |
+          # v1.2.3 → 1.2.3
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack + validate
+        run: |
+          set -euo pipefail
+          circleci orb pack src/ > orb.yml
+          circleci orb validate orb.yml
+
+      - name: Configure CircleCI CLI
+        env:
+          CIRCLECI_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CIRCLECI_TOKEN:-}" ]; then
+            echo "::error::CIRCLECI_TOKEN secret not set. Create a personal API token at https://app.circleci.com/settings/user/tokens and add it as CIRCLECI_TOKEN in this repo's secrets."
+            exit 1
+          fi
+          circleci setup --token "$CIRCLECI_TOKEN" --host "https://circleci.com" || true
+
+      - name: Publish orb
+        env:
+          CIRCLECI_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Namespace must exist first (one-time manual step):
+          #   circleci namespace create prestaflow github PrestaFlow
+          circleci orb publish orb.yml "prestaflow/prestaflow@${{ steps.tag.outputs.version }}" --token "$CIRCLECI_TOKEN"
+
+      - name: Note next steps
+        run: |
+          echo "::notice::Orb published as prestaflow/prestaflow@${{ steps.tag.outputs.version }}. Consumers can now use 'orbs: prestaflow: prestaflow/prestaflow@${{ steps.tag.outputs.version }}'."
