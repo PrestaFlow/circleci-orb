@@ -1,0 +1,133 @@
+description: |
+  End-to-end PrestaFlow step: (optionally) boot Flashlight, download visual
+  baselines, run tests, upload results + screenshots, comment the PR, set
+  outputs, and store artifacts.
+
+  Prereqs: `checkout` was called earlier in the job. Runs from the workspace root.
+
+parameters:
+  api_url:
+    description: "PrestaFlow API base URL"
+    type: string
+    default: "https://api.prestaflow.io"
+  token:
+    description: "Env var holding the PrestaFlow API token"
+    type: env_var_name
+    default: PRESTAFLOW_TOKEN
+  project_id:
+    description: "PrestaFlow project Product Key (pk_...)"
+    type: string
+    default: ""
+  execute:
+    description: "Run composer run prestaflow:json:file before upload"
+    type: boolean
+    default: true
+  suites:
+    description: "Comma-separated suite list (empty = all)"
+    type: string
+    default: ""
+  flashlight:
+    description: "Start a PrestaShop Flashlight Docker instance"
+    type: boolean
+    default: false
+  ps_version:
+    description: "Flashlight image tag (9.0.0, 8.1.7, latest)"
+    type: string
+    default: "latest"
+  flashlight_mount:
+    description: "auto|root|modules|themes"
+    type: string
+    default: "auto"
+  flashlight_init_scripts:
+    description: "Path to init scripts dir (mounted read-only at /tmp/init-scripts)"
+    type: string
+    default: ""
+  pr_comment:
+    description: "empty=auto (on PR jobs), 'true' to force, 'false' to skip"
+    type: string
+    default: ""
+  github_token:
+    description: "Env var for the GitHub token (PR comments on github.com projects)"
+    type: env_var_name
+    default: GITHUB_TOKEN
+  bitbucket_token:
+    description: "Env var for the Bitbucket token (PR comments on bitbucket.org projects)"
+    type: env_var_name
+    default: BITBUCKET_ACCESS_TOKEN
+  upload_artifacts:
+    description: "Store results.json + screenshots as CircleCI artifacts"
+    type: boolean
+    default: true
+  visual:
+    description: "Enable visual-regression round-trip"
+    type: boolean
+    default: true
+  install_deps:
+    description: "Install curl/jq/git/bash (and composer if execute=true) up-front"
+    type: boolean
+    default: true
+
+steps:
+  - when:
+      condition: << parameters.install_deps >>
+      steps:
+        - install-deps:
+            install_composer: << parameters.execute >>
+  - run:
+      name: "PrestaFlow: seed prestaflow.env"
+      command: |
+        touch prestaflow.env
+        {
+          echo "export PRESTAFLOW_PROJECT_ID='<< parameters.project_id >>'"
+          echo "export PRESTAFLOW_SUITES='<< parameters.suites >>'"
+          echo "export PRESTAFLOW_FLASHLIGHT='<< parameters.flashlight >>'"
+        } >> "$BASH_ENV"
+  - when:
+      condition: << parameters.flashlight >>
+      steps:
+        - flashlight:
+            ps_version: << parameters.ps_version >>
+            mount: << parameters.flashlight_mount >>
+            init_scripts: << parameters.flashlight_init_scripts >>
+  - when:
+      condition: << parameters.visual >>
+      steps:
+        - visual-download:
+            api_url: << parameters.api_url >>
+            token: << parameters.token >>
+  - when:
+      condition: << parameters.execute >>
+      steps:
+        - run-tests:
+            suites: << parameters.suites >>
+  - when:
+      condition: << parameters.visual >>
+      steps:
+        - visual-upload
+  - upload:
+      api_url: << parameters.api_url >>
+      token: << parameters.token >>
+      project_id: << parameters.project_id >>
+  - comment-pr:
+      force_mode: << parameters.pr_comment >>
+      github_token: << parameters.github_token >>
+      bitbucket_token: << parameters.bitbucket_token >>
+  - when:
+      condition: << parameters.upload_artifacts >>
+      steps:
+        - run:
+            name: "PrestaFlow: stage artifacts"
+            when: always
+            command: |
+              mkdir -p .prestaflow-artifacts
+              for c in tests/prestaflow/results.json prestaflow/results.json; do
+                [ -f "$c" ] && cp "$c" .prestaflow-artifacts/results.json && break
+              done
+              find . -type d -path '*/prestaflow/screens' -print0 2>/dev/null | while IFS= read -r -d '' d; do
+                cp -r "$d" .prestaflow-artifacts/ 2>/dev/null || true
+              done
+              cp prestaflow.env .prestaflow-artifacts/ 2>/dev/null || true
+        - store_artifacts:
+            path: .prestaflow-artifacts
+            destination: prestaflow
+  - set-outputs

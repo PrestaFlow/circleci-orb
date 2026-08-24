@@ -1,0 +1,63 @@
+description: |
+  Opinionated one-job wrapper: checkout + prestaflow/push on the machine
+  executor. Good for the common case; drop to composing your own job with
+  prestaflow/push when you need more control.
+
+parameters:
+  executor:
+    type: executor
+    default: machine
+  api_url:
+    type: string
+    default: "https://api.prestaflow.io"
+  token:
+    type: env_var_name
+    default: PRESTAFLOW_TOKEN
+  project_id:
+    type: string
+    default: ""
+  execute:
+    type: boolean
+    default: true
+  suites:
+    type: string
+    default: ""
+  flashlight:
+    type: boolean
+    default: false
+  ps_version:
+    type: string
+    default: "latest"
+  flashlight_mount:
+    type: string
+    default: "auto"
+  flashlight_init_scripts:
+    type: string
+    default: ""
+  pr_comment:
+    type: string
+    default: ""
+  upload_artifacts:
+    type: boolean
+    default: true
+  visual:
+    type: boolean
+    default: true
+
+executor: << parameters.executor >>
+
+steps:
+  - checkout
+  - push:
+      api_url: << parameters.api_url >>
+      token: << parameters.token >>
+      project_id: << parameters.project_id >>
+      execute: << parameters.execute >>
+      suites: << parameters.suites >>
+      flashlight: << parameters.flashlight >>
+      ps_version: << parameters.ps_version >>
+      flashlight_mount: << parameters.flashlight_mount >>
+      flashlight_init_scripts: << parameters.flashlight_init_scripts >>
+      pr_comment: << parameters.pr_comment >>
+      upload_artifacts: << parameters.upload_artifacts >>
+      visual: << parameters.visual >>

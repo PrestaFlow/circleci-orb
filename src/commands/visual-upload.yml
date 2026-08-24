@@ -1,0 +1,8 @@
+description: |
+  No-op placeholder. Visual actual/diff PNGs are shipped as part of the same
+  multipart POST in `upload` (matches the GitHub Action + GitLab component
+  behavior). Kept as a discrete step for symmetry and future extension.
+steps:
+  - run:
+      name: "PrestaFlow: visual-upload (bundled with upload)"
+      command: 'echo "visual-upload: no-op — PNGs travel with upload.sh"'

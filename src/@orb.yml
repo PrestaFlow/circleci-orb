@@ -1,0 +1,14 @@
+version: 2.1
+
+description: |
+  Run PrestaFlow tests in CircleCI: optionally boot a PrestaShop instance with
+  Flashlight, execute your PrestaFlow test suites, upload the report (with error
+  and visual-regression screenshots), and comment the run summary on the PR.
+
+  This is a straight port of the PrestaFlow GitHub Action and the GitLab CI/CD
+  component — same inputs, same upload endpoint (POST /ci/github-action,
+  provider-agnostic on the backend), same PR/MR comment format.
+
+display:
+  home_url: https://prestaflow.io
+  source_url: https://github.com/PrestaFlow/circleci-orb

@@ -1,0 +1,67 @@
+description: |
+  Fetch the visual-regression baseline manifest for the current branch and
+  download all baseline PNGs into ./visual-baseline/. Skipped when the API
+  responds 404/501 (backend not yet supporting baselines).
+
+parameters:
+  api_url:
+    type: string
+    default: "https://api.prestaflow.io"
+  token:
+    type: env_var_name
+    default: PRESTAFLOW_TOKEN
+steps:
+  - run:
+      name: "PrestaFlow: visual-download (setup)"
+      command: |
+        echo 'export PRESTAFLOW_API_URL="<< parameters.api_url >>"' >> "$BASH_ENV"
+        echo 'export PRESTAFLOW_TOKEN_VALUE="${<< parameters.token >>:-}"' >> "$BASH_ENV"
+  - run:
+      name: "PrestaFlow: download visual baselines"
+      command: |
+        set -euo pipefail
+        API_URL="${PRESTAFLOW_API_URL:-https://api.prestaflow.io}"
+        TOKEN="${PRESTAFLOW_TOKEN_VALUE:-}"
+        BRANCH="${CIRCLE_BRANCH:-}"
+        BASELINE_DIR="$PWD/visual-baseline"
+
+        if [ -z "$TOKEN" ]; then
+          echo "visual-download: token env var is empty — skipping"; exit 0
+        fi
+
+        URL="${API_URL}/ci/visual/baselines"
+        if [ -n "$BRANCH" ]; then
+          ENCODED=$(printf '%s' "$BRANCH" | jq -sRr @uri)
+          URL="${URL}?branch=${ENCODED}"
+        fi
+        echo "visual-download: fetching manifest from $URL"
+
+        RESPONSE=$(curl -sS -X GET "$URL" -H "X-Api-Token: ${TOKEN}" --write-out '\n%{http_code}' || true)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        if [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "501" ]; then
+          echo "visual-download: API does not support visual baselines yet — skipping"; exit 0
+        fi
+        if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+          echo "visual-download: manifest fetch failed (HTTP $HTTP_CODE), continuing without baselines"
+          echo "$BODY" | head -c 1000; exit 0
+        fi
+
+        COUNT=$(echo "$BODY" | jq -r '.baselines | length // 0')
+        if [ "$COUNT" = "0" ] || [ -z "$COUNT" ]; then
+          echo "visual-download: no baselines in manifest"; exit 0
+        fi
+
+        mkdir -p "$BASELINE_DIR"
+        echo "visual-download: downloading $COUNT baseline(s) into $BASELINE_DIR"
+        echo "$BODY" | jq -c '.baselines[]' | while IFS= read -r baseline; do
+          NAME=$(echo "$baseline" | jq -r '.name')
+          TAG=$(echo "$baseline" | jq -r '.tag')
+          DL=$(echo "$baseline" | jq -r '.download_url')
+          DEST="${BASELINE_DIR}/${NAME}--${TAG}.png"
+          if ! curl -sS -f -o "$DEST" -H "X-Api-Token: ${TOKEN}" "${API_URL}${DL}"; then
+            echo "visual-download: failed to fetch ${NAME}--${TAG}"; rm -f "$DEST"
+          fi
+        done
+        echo "visual-download: done ($(ls -1 "$BASELINE_DIR" 2>/dev/null | wc -l | tr -d ' ') file(s))"

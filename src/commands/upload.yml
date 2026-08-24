@@ -1,0 +1,118 @@
+description: |
+  POST results.json + error/visual screenshots to PrestaFlow.
+  Populates PRESTAFLOW_REPORT_ID and PRESTAFLOW_REPORT_URL in BASH_ENV and
+  prestaflow.env for downstream steps.
+
+parameters:
+  api_url:
+    type: string
+    default: "https://api.prestaflow.io"
+  token:
+    type: env_var_name
+    default: PRESTAFLOW_TOKEN
+  project_id:
+    type: string
+    default: ""
+steps:
+  - run:
+      name: "PrestaFlow: upload (setup)"
+      command: |
+        echo 'export PRESTAFLOW_API_URL="<< parameters.api_url >>"' >> "$BASH_ENV"
+        echo 'export PRESTAFLOW_TOKEN_VALUE="${<< parameters.token >>:-}"' >> "$BASH_ENV"
+        echo 'export PRESTAFLOW_PROJECT_ID="<< parameters.project_id >>"' >> "$BASH_ENV"
+  - run:
+      name: "PrestaFlow: upload results"
+      command: |
+        set -euo pipefail
+        API_URL="${PRESTAFLOW_API_URL:-https://api.prestaflow.io}"
+        TOKEN="${PRESTAFLOW_TOKEN_VALUE:-}"
+        PROJECT_ID="${PRESTAFLOW_PROJECT_ID:-}"
+
+        if [ -z "$TOKEN" ]; then
+          echo "upload: token env var is empty — refusing to call the API"; exit 1
+        fi
+
+        RESULTS=""
+        for c in tests/prestaflow/results.json prestaflow/results.json; do
+          if [ -f "$c" ]; then RESULTS="$c"; break; fi
+        done
+        if [ -z "$RESULTS" ]; then
+          echo "upload: no results.json found — skipping"; exit 0
+        fi
+        echo "upload: sending $RESULTS to $API_URL/ci/github-action"
+
+        PR_NUMBER=""
+        if [ -n "${CIRCLE_PULL_REQUEST:-}" ]; then
+          PR_NUMBER="${CIRCLE_PULL_REQUEST##*/}"
+        fi
+        REPO_PATH=""
+        if [ -n "${CIRCLE_PROJECT_USERNAME:-}" ] && [ -n "${CIRCLE_PROJECT_REPONAME:-}" ]; then
+          REPO_PATH="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+        fi
+
+        CI_JSON=$(jq -n \
+          --arg circleci        "true" \
+          --arg build_url       "${CIRCLE_BUILD_URL:-}" \
+          --arg workflow_id     "${CIRCLE_WORKFLOW_ID:-}" \
+          --arg job             "${CIRCLE_JOB:-}" \
+          --arg user            "${CIRCLE_USERNAME:-}" \
+          --arg commit_sha      "${CIRCLE_SHA1:-}" \
+          --arg branch          "${CIRCLE_BRANCH:-}" \
+          --arg repo            "$REPO_PATH" \
+          --arg pr_url          "${CIRCLE_PULL_REQUEST:-}" \
+          --arg pr_number       "$PR_NUMBER" \
+          '{CIRCLECI: $circleci,
+            CIRCLE_BUILD_URL: $build_url,
+            CIRCLE_WORKFLOW_ID: $workflow_id,
+            CIRCLE_JOB: $job,
+            CIRCLE_USERNAME: $user,
+            CIRCLE_SHA1: $commit_sha,
+            CIRCLE_BRANCH: $branch,
+            CIRCLE_PROJECT_REPO: $repo,
+            CIRCLE_PULL_REQUEST: $pr_url,
+            CIRCLE_PR_NUMBER: $pr_number}')
+
+        FORM_ARGS=(
+          -F "projectId=${PROJECT_ID}"
+          -F "ci=${CI_JSON};type=application/json"
+        )
+        [ -n "${CIRCLE_BRANCH:-}" ]      && FORM_ARGS+=(-F "branch=${CIRCLE_BRANCH}")
+        [ -n "${CIRCLE_SHA1:-}" ]        && FORM_ARGS+=(-F "commit_sha=${CIRCLE_SHA1}")
+        [ -n "${CIRCLE_BRANCH:-}" ]      && FORM_ARGS+=(-F "ref=refs/heads/${CIRCLE_BRANCH}")
+        [ -n "${CIRCLE_WORKFLOW_ID:-}" ] && FORM_ARGS+=(-F "ci_run_id=${CIRCLE_WORKFLOW_ID}")
+        [ -n "$REPO_PATH" ]              && FORM_ARGS+=(-F "github_repository=${REPO_PATH}")
+
+        FORM_ARGS+=(-F "file[]=@${RESULTS};filename=results.json")
+
+        while IFS= read -r -d '' f; do
+          FORM_ARGS+=(-F "file[]=@${f};filename=screens/$(basename "$f")")
+        done < <(find . -type f -path '*/prestaflow/screens/errors/*.png' -print0 2>/dev/null)
+        while IFS= read -r -d '' f; do
+          FORM_ARGS+=(-F "file[]=@${f};filename=visual/actual/$(basename "$f")")
+        done < <(find . -type f -path '*/prestaflow/screens/actual/*.png' -print0 2>/dev/null)
+        while IFS= read -r -d '' f; do
+          FORM_ARGS+=(-F "file[]=@${f};filename=visual/diff/$(basename "$f")")
+        done < <(find . -type f -path '*/prestaflow/screens/diff/*.png' -print0 2>/dev/null)
+
+        RESPONSE=$(curl -sS -X POST "${API_URL}/ci/github-action" \
+          -H "X-Api-Token: ${TOKEN}" \
+          "${FORM_ARGS[@]}" \
+          --write-out '\n%{http_code}' || true)
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+          echo "upload: API returned HTTP $HTTP_CODE"; echo "$BODY" | head -c 2000; exit 0
+        fi
+
+        REPORT_ID=$(echo "$BODY" | jq -r '.id // empty')
+        REPORT_URL=$(echo "$BODY" | jq -r '.url // empty')
+        echo "upload: report id=$REPORT_ID"
+        echo "upload: report url=$REPORT_URL"
+
+        echo "export PRESTAFLOW_REPORT_ID='${REPORT_ID}'" >> "$BASH_ENV"
+        echo "export PRESTAFLOW_REPORT_URL='${REPORT_URL}'" >> "$BASH_ENV"
+        {
+          echo "PRESTAFLOW_REPORT_ID=${REPORT_ID}"
+          echo "PRESTAFLOW_REPORT_URL=${REPORT_URL}"
+        } >> prestaflow.env

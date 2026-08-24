@@ -1,0 +1,13 @@
+description: |
+  Linux machine executor with Docker available. REQUIRED when flashlight=true,
+  because the PrestaShop container needs to bind-mount the checkout, which the
+  remote-docker sandbox does not support.
+
+parameters:
+  image:
+    description: Machine image tag
+    type: string
+    default: "ubuntu-2404:current"
+machine:
+  image: << parameters.image >>
+resource_class: medium

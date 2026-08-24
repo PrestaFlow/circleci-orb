@@ -1,0 +1,15 @@
+description: |
+  Docker executor with PHP + Composer + git + curl + jq. Good for the common
+  case where you already have a PrestaShop reachable (staging URL, or Flashlight
+  booted in an adjacent job) and only need to run tests + upload results.
+
+  For flashlight=true, use the "machine" executor instead — Docker bind mounts
+  from the workspace into the Flashlight container require the machine executor.
+
+parameters:
+  tag:
+    description: cimg/php image tag
+    type: string
+    default: "8.3"
+docker:
+  - image: cimg/php:<< parameters.tag >>

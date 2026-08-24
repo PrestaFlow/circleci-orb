@@ -1,0 +1,50 @@
+description: |
+  Ensure curl, jq, git, bash are present. Idempotent. Composer/PHP are only
+  installed if not present AND install_composer=true.
+
+parameters:
+  install_composer:
+    type: boolean
+    default: false
+steps:
+  - run:
+      name: "PrestaFlow: install-deps (setup)"
+      command: |
+        echo 'export PRESTAFLOW_INSTALL_COMPOSER=<< parameters.install_composer >>' >> "$BASH_ENV"
+  - run:
+      name: "PrestaFlow: install runtime deps"
+      command: |
+        set -eu
+        need() { command -v "$1" >/dev/null 2>&1; }
+        SUDO=""
+        if [ "$(id -u)" != "0" ]; then SUDO="sudo"; fi
+
+        if need apk; then
+          $SUDO apk add --no-cache curl jq bash git ca-certificates >/dev/null
+        elif need apt-get; then
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -y --no-install-recommends curl jq bash git ca-certificates >/dev/null
+        fi
+
+        if [ "${PRESTAFLOW_INSTALL_COMPOSER:-false}" = "true" ] && ! need composer; then
+          if need apt-get; then
+            $SUDO apt-get install -y --no-install-recommends php-cli php-mbstring php-xml unzip >/dev/null || true
+          fi
+          if need php; then
+            EXPECTED_SIG=$(curl -sS https://composer.github.io/installer.sig)
+            curl -sS -o /tmp/composer-setup.php https://getcomposer.org/installer
+            ACTUAL_SIG=$(php -r "echo hash_file('sha384','/tmp/composer-setup.php');")
+            if [ "$EXPECTED_SIG" != "$ACTUAL_SIG" ]; then
+              echo "install-deps: composer installer checksum mismatch"; exit 1
+            fi
+            $SUDO php /tmp/composer-setup.php --install-dir=/usr/local/bin --filename=composer >/dev/null
+            rm -f /tmp/composer-setup.php
+          else
+            echo "install-deps: PHP not available — skipping composer install (set up PHP first)"
+          fi
+        fi
+
+        for b in curl jq bash git; do
+          if ! need "$b"; then echo "install-deps: missing $b after install"; exit 1; fi
+        done
+        echo "install-deps: ok"

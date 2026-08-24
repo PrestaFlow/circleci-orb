@@ -1,0 +1,234 @@
+description: |
+  Post/update a summary comment on the pull request. Provider detected from
+  CIRCLE_PULL_REQUEST:
+    - github.com    -> GITHUB_TOKEN, POST /repos/{owner}/{repo}/issues/{n}/comments
+    - bitbucket.org -> BITBUCKET_ACCESS_TOKEN, POST /repositories/{ws}/{repo}/pullrequests/{n}/comments
+  Auto-detects: enabled when CIRCLE_PULL_REQUEST is set, unless force_mode overrides.
+
+parameters:
+  force_mode:
+    description: "empty=auto (on PR jobs), 'true' to force, 'false' to skip"
+    type: string
+    default: ""
+  github_token:
+    type: env_var_name
+    default: GITHUB_TOKEN
+  bitbucket_token:
+    type: env_var_name
+    default: BITBUCKET_ACCESS_TOKEN
+steps:
+  - run:
+      name: "PrestaFlow: comment PR (setup)"
+      command: |
+        echo 'export PRESTAFLOW_PR_FORCE_MODE="<< parameters.force_mode >>"' >> "$BASH_ENV"
+        echo 'export PRESTAFLOW_GITHUB_TOKEN="${<< parameters.github_token >>:-}"' >> "$BASH_ENV"
+        echo 'export PRESTAFLOW_BITBUCKET_TOKEN="${<< parameters.bitbucket_token >>:-}"' >> "$BASH_ENV"
+  - run:
+      name: "PrestaFlow: comment PR"
+      command: |
+        set -euo pipefail
+
+        DEFAULT="false"
+        [ -n "${CIRCLE_PULL_REQUEST:-}" ] && DEFAULT="true"
+
+        MODE="${PRESTAFLOW_PR_FORCE_MODE:-}"
+        [ -z "$MODE" ] && MODE="$DEFAULT"
+        if [ "$MODE" != "true" ]; then
+          echo "comment-pr: disabled (mode=$MODE) — skipping"; exit 0
+        fi
+        if [ -z "${CIRCLE_PULL_REQUEST:-}" ]; then
+          echo "comment-pr: not a PR job (CIRCLE_PULL_REQUEST empty) — skipping"; exit 0
+        fi
+
+        PR_URL="$CIRCLE_PULL_REQUEST"
+        PR_NUMBER="${PR_URL##*/}"
+
+        PROVIDER=""
+        case "$PR_URL" in
+          *github.com*)    PROVIDER="github" ;;
+          *bitbucket.org*) PROVIDER="bitbucket" ;;
+          *)               PROVIDER="unknown" ;;
+        esac
+        if [ "$PROVIDER" = "unknown" ]; then
+          echo "comment-pr: unsupported provider in $PR_URL — skipping"; exit 0
+        fi
+
+        TOKEN=""
+        if [ "$PROVIDER" = "github" ];    then TOKEN="${PRESTAFLOW_GITHUB_TOKEN:-}"; fi
+        if [ "$PROVIDER" = "bitbucket" ]; then TOKEN="${PRESTAFLOW_BITBUCKET_TOKEN:-}"; fi
+        if [ -z "$TOKEN" ]; then
+          echo "comment-pr: no auth token for $PROVIDER (set the matching env var). Skipping — this is a warning."
+          exit 0
+        fi
+
+        REPORT_URL=""; REPORT_ID=""
+        if [ -f prestaflow.env ]; then
+          . ./prestaflow.env || true
+          REPORT_URL="${PRESTAFLOW_REPORT_URL:-}"
+          REPORT_ID="${PRESTAFLOW_REPORT_ID:-}"
+        fi
+
+        RESULTS=""
+        for c in tests/prestaflow/results.json prestaflow/results.json; do
+          if [ -f "$c" ]; then RESULTS="$c"; break; fi
+        done
+
+        if [ -n "$RESULTS" ]; then
+          STATS_JSON=$(jq '
+            def tonum(x): (x // 0 | tonumber? // 0);
+            def sfrom(s): s as $s |
+              { name: ($s.suite // ""),
+                passed: ($s.stats.passes | tonum(.)),
+                failed: ($s.stats.failures | tonum(.)),
+                skipped: (($s.stats.skips | tonum(.)) + ($s.stats.skippeds | tonum(.))),
+                todos: ($s.stats.todos | tonum(.)),
+                durationMs: ($s.stats.time | tonum(.)),
+                failures: [ ($s.tests // [])[] | select(.state == "fail") | {
+                  suite: ($s.suite // ""), title: (.title // ""),
+                  message: ((.expect.fail // [])[0] // ""),
+                  file: (.file // ""), line: (.line | tonum(.))
+                }]
+              };
+            if type == "object" and (.suites | type == "array") then [ .suites[] | sfrom(.) ]
+            elif type == "object" and (.stats) then [ sfrom(.) ]
+            else [] end
+            | { suites: [ .[] | {name, passed, failed, skipped, durationMs} ],
+                failures: [ .[].failures[] ],
+                passed: ([.[].passed] | add // 0),
+                failed: ([.[].failed] | add // 0),
+                skipped: ([.[].skipped] | add // 0),
+                todos: ([.[].todos] | add // 0),
+                durationMs: ([.[].durationMs] | add // 0) }
+            | .total = (.passed + .failed + .skipped + .todos)
+          ' "$RESULTS")
+        else
+          STATS_JSON='{"suites":[],"failures":[],"passed":0,"failed":0,"skipped":0,"todos":0,"durationMs":0,"total":0}'
+        fi
+
+        PASSED=$(echo "$STATS_JSON" | jq -r '.passed')
+        FAILED=$(echo "$STATS_JSON" | jq -r '.failed')
+        SKIPPED=$(echo "$STATS_JSON" | jq -r '.skipped')
+        TOTAL=$(echo "$STATS_JSON" | jq -r '.total')
+        DURATION_MS=$(echo "$STATS_JSON" | jq -r '.durationMs')
+
+        format_duration() {
+          local ms="$1"; local s=$(( (ms + 500) / 1000 ))
+          if [ $s -lt 60 ]; then echo "${s}s"; return; fi
+          local m=$(( s / 60 )); local r=$(( s % 60 ))
+          printf "%dm %02ds" "$m" "$r"
+        }
+        DURATION_HUMAN=$(format_duration "$DURATION_MS")
+
+        PROJECT_KEY="${PRESTAFLOW_PROJECT_ID:-}"
+        if [ -z "$PROJECT_KEY" ]; then MARKER='<!-- prestaflow-report -->'
+        else MARKER="<!-- prestaflow-run:${PROJECT_KEY} -->"
+        fi
+
+        SHORT_SHA=$(printf '%s' "${CIRCLE_SHA1:-}" | cut -c1-7)
+        FOOTER="<sub>Generated by [PrestaFlow/circleci-orb](https://github.com/PrestaFlow/circleci-orb) · commit \`${SHORT_SHA}\`</sub>"
+
+        META_PARTS=()
+        if [ -n "${PRESTAFLOW_SUITES:-}" ]; then
+          QUOTED=$(printf '%s' "$PRESTAFLOW_SUITES" | awk -F, '{for(i=1;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i); if($i!="") printf "%s`%s`", (i>1?", ":""), $i}}')
+          META_PARTS+=("Suites: $QUOTED")
+        fi
+        if [ "${PRESTAFLOW_FLASHLIGHT:-false}" = "true" ] && [ -n "${PRESTAFLOW_PS_VERSION:-}" ]; then
+          META_PARTS+=("PS \`${PRESTAFLOW_PS_VERSION}\`")
+        fi
+        META_LINE=""
+        if [ ${#META_PARTS[@]} -gt 0 ]; then
+          META_LINE=$(printf ' · %s' "${META_PARTS[@]}"); META_LINE="${META_LINE:3}"
+        fi
+
+        SUITE_TABLE=""
+        SUITE_COUNT=$(echo "$STATS_JSON" | jq -r '.suites | length')
+        if [ "$SUITE_COUNT" -gt 1 ]; then
+          ROWS=$(echo "$STATS_JSON" | jq -r '
+            .suites[] |
+            "| " + .name + " | " + (.passed|tostring) + " | " + (.failed|tostring) + " | " + (.durationMs|tostring) + "ms |"')
+          HUMAN_ROWS=""
+          while IFS= read -r row; do
+            ms=$(echo "$row" | awk -F' \\| ' '{gsub("ms \\|","",$5); print $5}')
+            hum=$(format_duration "${ms:-0}")
+            HUMAN_ROWS+="${row/${ms}ms |/${hum} |}"$'\n'
+          done < <(printf '%s\n' "$ROWS")
+          SUITE_TABLE=$(printf '| Suite | Passed | Failed | Duration |\n|-------|:--------:|:--------:|:--------:|\n%s' "$HUMAN_ROWS")
+        fi
+
+        if [ "$FAILED" = "0" ]; then
+          BODY="$MARKER"$'\n\n'"**${TOTAL} tests passed in ${DURATION_HUMAN}**"$'\n'
+          [ -n "$SUITE_TABLE" ] && BODY="${BODY}"$'\n'"${SUITE_TABLE}"$'\n'
+          [ -n "$META_LINE" ] && BODY="${BODY}"$'\n'"${META_LINE}"$'\n'
+          [ -n "$REPORT_URL" ] && BODY="${BODY}"$'\n'"View full report: ${REPORT_URL}"$'\n'
+          BODY="${BODY}"$'\n'"${FOOTER}"
+        else
+          MAX_FAILURES=20
+          FAILURE_COUNT=$(echo "$STATS_JSON" | jq -r '.failures | length')
+          EXTRA=$(( FAILURE_COUNT - MAX_FAILURES )); [ $EXTRA -lt 0 ] && EXTRA=0
+          FAILURE_DETAILS=$(echo "$STATS_JSON" | jq -r --argjson max "$MAX_FAILURES" '
+            .failures[:$max] | map(
+              "**" + .suite + " / " + .title + "**\n> " +
+              (if (.message | length) > 200 then (.message[0:200] + "…") else .message end) +
+              (if .file != "" then ("\n> `" + .file + ":" + (.line|tostring) + "`") else "" end)
+            ) | join("\n\n")')
+          if [ "$EXTRA" -gt 0 ]; then
+            FAILURE_DETAILS="${FAILURE_DETAILS}"$'\n\n'"… +${EXTRA} more failed."
+          fi
+          BODY="$MARKER"$'\n\n'"**Result: ${FAILED} failures out of ${TOTAL} tests**"$'\n\n'
+          BODY="${BODY}| Passed | Failed | Skipped | Duration |"$'\n'
+          BODY="${BODY}|--------|--------|---------|----------|"$'\n'
+          BODY="${BODY}| ${PASSED} | ${FAILED} | ${SKIPPED} | ${DURATION_HUMAN} |"$'\n'
+          [ -n "$SUITE_TABLE" ] && BODY="${BODY}"$'\n'"${SUITE_TABLE}"$'\n'
+          [ -n "$META_LINE" ] && BODY="${BODY}"$'\n'"${META_LINE}"$'\n'
+          BODY="${BODY}"$'\n'"<details><summary>Failure details (${FAILED})</summary>"$'\n\n'"${FAILURE_DETAILS}"$'\n\n'"</details>"$'\n'
+          [ -n "$REPORT_URL" ] && BODY="${BODY}"$'\n'"View full report: ${REPORT_URL}"$'\n'
+          BODY="${BODY}"$'\n'"${FOOTER}"
+        fi
+
+        OWNER="${CIRCLE_PROJECT_USERNAME:-}"
+        REPO="${CIRCLE_PROJECT_REPONAME:-}"
+
+        if [ "$PROVIDER" = "github" ]; then
+          API="https://api.github.com/repos/${OWNER}/${REPO}/issues/${PR_NUMBER}/comments"
+          EXISTING_ID=""
+          for page in 1 2 3 4 5; do
+            LIST=$(curl -sS -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/vnd.github+json" "${API}?per_page=100&page=${page}")
+            EXISTING_ID=$(echo "$LIST" | jq -r --arg m "$MARKER" 'map(select((.body // "") | startswith($m))) | .[0].id // empty')
+            [ -n "$EXISTING_ID" ] && break
+            LEN=$(echo "$LIST" | jq -r 'length // 0')
+            [ "$LEN" -lt 100 ] && break
+          done
+          PAYLOAD=$(jq -n --arg body "$BODY" '{body: $body}')
+          if [ -n "$EXISTING_ID" ]; then
+            echo "comment-pr(github): updating comment #$EXISTING_ID"
+            curl -sS -X PATCH -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" -d "$PAYLOAD" \
+              "https://api.github.com/repos/${OWNER}/${REPO}/issues/comments/${EXISTING_ID}" \
+              -o /dev/null -w 'http=%{http_code}\n'
+          else
+            echo "comment-pr(github): creating new comment on PR #$PR_NUMBER"
+            curl -sS -X POST -H "Authorization: Bearer ${TOKEN}" -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" -d "$PAYLOAD" \
+              "$API" -o /dev/null -w 'http=%{http_code}\n'
+          fi
+        elif [ "$PROVIDER" = "bitbucket" ]; then
+          API="https://api.bitbucket.org/2.0/repositories/${OWNER}/${REPO}/pullrequests/${PR_NUMBER}/comments"
+          EXISTING_ID=""
+          NEXT="${API}?pagelen=100"
+          while [ -n "$NEXT" ] && [ "$NEXT" != "null" ]; do
+            LIST=$(curl -sS -H "Authorization: Bearer ${TOKEN}" "$NEXT")
+            EXISTING_ID=$(echo "$LIST" | jq -r --arg m "$MARKER" '.values | map(select((.content.raw // "") | startswith($m))) | .[0].id // empty')
+            [ -n "$EXISTING_ID" ] && break
+            NEXT=$(echo "$LIST" | jq -r '.next // empty')
+          done
+          PAYLOAD=$(jq -n --arg body "$BODY" '{content: {raw: $body}}')
+          if [ -n "$EXISTING_ID" ]; then
+            echo "comment-pr(bitbucket): updating comment #$EXISTING_ID"
+            curl -sS -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d "$PAYLOAD" \
+              "${API}/${EXISTING_ID}" -o /dev/null -w 'http=%{http_code}\n'
+          else
+            echo "comment-pr(bitbucket): creating new comment on PR #$PR_NUMBER"
+            curl -sS -X POST -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d "$PAYLOAD" \
+              "$API" -o /dev/null -w 'http=%{http_code}\n'
+          fi
+        fi

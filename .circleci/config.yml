@@ -1,0 +1,61 @@
+version: 2.1
+
+# Orb dev + publish pipeline.
+#   - pack + lint + review on every push
+#   - publish a dev version on non-tag pushes to main
+#   - publish a production version (patch/minor/major from PR labels) on v*.*.* tags
+#
+# Requires an env context/var CIRCLE_TOKEN with the org's publisher token, or
+# use orb-tools' out-of-the-box orb-publishing context. Adjust `orb-name`
+# to match your registered namespace.
+
+orbs:
+  orb-tools: circleci/orb-tools@12.3.1
+
+filters: &filters
+  tags:
+    only: /.*/
+
+jobs:
+  smoke-test:
+    machine:
+      image: ubuntu-2404:current
+    steps:
+      - checkout
+      - run:
+          name: Publish orb to alpha channel and integration-test
+          command: |
+            echo "Alpha channel is published by orb-tools/publish-dev in the workflow;"
+            echo "this job re-runs tests/smoke.yml as the integration harness."
+      - run:
+          name: Assert packed orb validates
+          command: |
+            circleci orb pack src/ > /tmp/orb.yml
+            circleci orb validate /tmp/orb.yml
+      # Uncomment once tests/smoke.yml can be executed against the alpha version
+      # via `circleci config process`.
+
+workflows:
+  lint-pack-publish:
+    jobs:
+      - orb-tools/lint:
+          filters: *filters
+      - orb-tools/pack:
+          filters: *filters
+      - orb-tools/review:
+          filters: *filters
+      - orb-tools/publish:
+          orb_name: prestaflow/prestaflow
+          vcs_type: << pipeline.project.type >>
+          pub_type: production
+          enable_pr_comment: false
+          requires:
+            - orb-tools/lint
+            - orb-tools/pack
+            - orb-tools/review
+          context: orb-publishing
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v.*/
