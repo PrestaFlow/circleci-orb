@@ -2,6 +2,17 @@
 
 All notable changes to the PrestaFlow CircleCI Orb are documented here.
 
+## [Unreleased]
+
+### Fixed
+- **Version from the shop's sources on PrestaShop 8 and 9.** For a Flashlight
+  tag without a version, when the image does not set `PS_VERSION`, the
+  fallback read `app/AppKernel.php`, which only declares the version itself on
+  1.7 (from 8.0 it says `const VERSION = Version::VERSION;`). It now reads
+  `src/Core/Version.php` first, then `app/AppKernel.php`. Checked on the
+  1.7.8.11, 8.1.7, 8.2.8, 9.0.0 and 9.2.0 images. No change while the images
+  set `PS_VERSION`, as all current Flashlight images do.
+
 ## [0.2.0] — 2026-11-24
 
 Flashlight fixes of the GitHub Action v2.3.0 to v2.4.1, for
