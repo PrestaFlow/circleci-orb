@@ -18,7 +18,7 @@ the backend), same PR/MR comment format.
 ```yaml
 version: 2.1
 orbs:
-  prestaflow: prestaflow/prestaflow@1.0.0
+  prestaflow: prestaflow/prestaflow@0.2.0
 ```
 
 While iterating, use the dev channel:
@@ -35,7 +35,7 @@ orbs:
 ```yaml
 version: 2.1
 orbs:
-  prestaflow: prestaflow/prestaflow@1.0.0
+  prestaflow: prestaflow/prestaflow@0.2.0
 
 workflows:
   test:
@@ -58,7 +58,7 @@ CircleCI project or an org context.
 ```yaml
 version: 2.1
 orbs:
-  prestaflow: prestaflow/prestaflow@1.0.0
+  prestaflow: prestaflow/prestaflow@0.2.0
 
 jobs:
   test:
@@ -98,15 +98,69 @@ workflows:
 | `execute` | `true` | Run `composer run prestaflow:json:file` before upload. |
 | `suites` | `""` | Comma-separated suite list (empty = all). |
 | `flashlight` | `false` | Start a PrestaShop Flashlight Docker instance. Requires the `machine` executor. |
-| `ps_version` | `"latest"` | Flashlight image tag (`9.0.0`, `8.1.7`, `latest`). |
+| `ps_version` | `"latest"` | Flashlight image tag (`9.0.0`, `8.2.8-nginx`, `latest`). See [Flashlight](#flashlight) for the version given to the tests. |
 | `flashlight_mount` | `"auto"` | `auto` \| `root` \| `modules` \| `themes`. Where the workspace is mounted inside PrestaShop. |
 | `flashlight_init_scripts` | `""` | Path (absolute or relative to the workspace) to a dir of init scripts, mounted at `/tmp/init-scripts` read-only. |
+| `flashlight_install_module` | `true` | When `composer.json` has `type: prestashop-module`, install the mounted module in Flashlight once the shop is ready. Set to `false` to skip. |
 | `pr_comment` | `""` (auto) | Post/update the PR comment. Auto: `true` when `CIRCLE_PULL_REQUEST` is set, `false` otherwise. |
 | `github_token` | `GITHUB_TOKEN` (env var name) | Token used for PR comments on github.com projects. |
 | `bitbucket_token` | `BITBUCKET_ACCESS_TOKEN` (env var name) | Token used for PR comments on bitbucket.org projects. |
 | `upload_artifacts` | `true` | Store `results.json` + screenshots as CircleCI artifacts. |
 | `visual` | `true` | Enable the visual-regression round-trip (download baselines before, upload actual/diff after). |
 | `install_deps` | `true` | Install curl/jq/git/bash (and composer if `execute=true`) up-front. Disable to bring your own image. |
+
+---
+
+## Flashlight
+
+With `flashlight: true`, the orb boots `prestashop/prestashop-flashlight:<ps_version>`
+and a `mariadb:lts` on the machine executor, waits until `/admin-dev/` answers
+(PrestaShop really serving, not just the web server), then prepares the shop
+and the settings of your tests.
+
+**PrestaShop version.** `prestaflow/php-library` only accepts a bare version
+(`1.7.8.11`, `8.2.8`) in `PRESTAFLOW_PS_VERSION`, and stops on anything else.
+The image keeps the tag you give, but the version passed to the tests is read
+from it: `8.2.8-nginx` gives `8.2.8`, `1.7.8.11-7.4-fpm-alpine-nginx` gives
+`1.7.8.11`. For a tag without a version (`latest`, `nightly`…), the orb reads
+the image's `PS_VERSION` variable (`latest` is 9.2.1 at the time of writing).
+When nothing gives the version, `PRESTAFLOW_PS_VERSION` is left to you, with a
+warning in the step output.
+
+> `latest` is PrestaShop 9.2, which installs the Hummingbird theme. Set
+> `PRESTAFLOW_THEME: hummingbird` in the job's `environment:` (or a context),
+> or the library looks for Classic's markup.
+
+**Accounts.** Since `prestaflow/php-library` 1.9.0 the library no longer
+falls back on demo accounts. With Flashlight, the orb provides the image's
+back-office account (`admin@prestashop.com` / `prestashop`) and the demo
+customer of the PrestaShop fixtures (`pub@prestashop.com` / `123456789`), at
+the lowest priority.
+
+**`.env.local`.** The library reads its settings from `.env.local`, or from
+`.env` when there is no `.env.local`. The `flashlight` command writes one
+merged `.env.local`, from the lowest to the highest priority:
+
+1. the Flashlight accounts (`PRESTAFLOW_BO_EMAIL`, `PRESTAFLOW_BO_PASSWD`,
+   `PRESTAFLOW_FO_EMAIL`, `PRESTAFLOW_FO_PASSWD`);
+2. your repository's `.env.local`, or `.env` when there is none, copied as is;
+3. the shop: `PRESTAFLOW_FO_URL`, `PRESTAFLOW_BO_URL` (`…/admin-dev/`) and
+   `PRESTAFLOW_PS_VERSION`;
+4. the `PRESTAFLOW_*` variables of the job (project, context or
+   `environment:`; the orb's own settings and tokens excepted).
+
+`run-tests` removes those keys from composer's environment so the library
+reads them from the file. A versioned `.env.local` is merged, not overwritten;
+`push` runs `flashlight-restore` with `when: always` to put it back (or to
+remove the generated file when the repository had none). When you compose
+`flashlight` and `run-tests` yourself, end the job with `prestaflow/flashlight-restore`.
+
+**Module.** When `composer.json` has `type: prestashop-module`, the mounted
+module is installed with `php bin/console prestashop:module install <name>`
+in the container. If an init-script already installed it, PrestaShop upgrades
+it instead. A failed install only prints a warning; set
+`flashlight_install_module: false` (`install_module: false` on the
+`flashlight` command) to skip it.
 
 ---
 
@@ -140,6 +194,9 @@ can consume them as environment variables:
 | `PRESTAFLOW_TOTAL` | Total number of tests. |
 | `PRESTAFLOW_DURATION_MS` | Total execution duration in milliseconds. |
 | `PRESTAFLOW_STATUS` | `success` if `failed==0`, else `failure`. |
+| `PRESTAFLOW_FO_URL`, `PRESTAFLOW_BO_URL` | Flashlight only: the shop's front and back office (in `prestaflow.env`; `PRESTAFLOW_FO_URL` is also exported into `BASH_ENV`). |
+| `PRESTAFLOW_PS_VERSION` | Flashlight only: the PrestaShop version given to the tests, when it could be told (in `prestaflow.env`). |
+| `PRESTAFLOW_FLASHLIGHT_TAG` | Flashlight only: the image tag (`ps_version`). |
 
 To share them across jobs, use `persist_to_workspace` on `prestaflow.env` and
 `attach_workspace` + `source prestaflow.env` in the downstream job.
@@ -150,9 +207,10 @@ To share them across jobs, use `persist_to_workspace` on `prestaflow.env` and
 
 | Command | Purpose |
 |---------|---------|
-| `prestaflow/push` | Full pipeline: flashlight (opt) → visual-download → run-tests → upload → comment-pr → set-outputs → artifacts. |
-| `prestaflow/flashlight` | Boot PrestaShop Flashlight and export `PRESTAFLOW_FO_URL`. |
-| `prestaflow/run-tests` | `composer run prestaflow:json:file`. |
+| `prestaflow/push` | Full pipeline: flashlight (opt) → visual-download → run-tests → upload → comment-pr → flashlight-restore (opt) → set-outputs → artifacts. |
+| `prestaflow/flashlight` | Boot PrestaShop Flashlight, install the mounted module, write the merged `.env.local` and export `PRESTAFLOW_FO_URL`. |
+| `prestaflow/flashlight-restore` | Put the repository's `.env.local` back after `flashlight` (`when: always`). |
+| `prestaflow/run-tests` | `composer run prestaflow:json:file`, without the `PRESTAFLOW_*` keys written to `.env.local` in its environment. |
 | `prestaflow/visual-download` | Fetch baseline manifest for the branch, download PNGs. |
 | `prestaflow/visual-upload` | No-op (visual PNGs travel with `upload`); kept for symmetry. |
 | `prestaflow/upload` | POST `results.json` + screenshots to the API. Sets `PRESTAFLOW_REPORT_*`. |
@@ -173,8 +231,8 @@ circleci orb validate orb.yml
 circleci orb publish orb.yml prestaflow/prestaflow@dev:first
 
 # Promote to production on a tag
-git tag v0.1.0 && git push --tags
-circleci orb publish orb.yml prestaflow/prestaflow@0.1.0
+git tag v0.2.0 && git push --tags
+circleci orb publish orb.yml prestaflow/prestaflow@0.2.0
 ```
 
 CI (`.circleci/config.yml`) uses `circleci/orb-tools` to lint, pack, review,
