@@ -132,8 +132,8 @@ steps:
           QUOTED=$(printf '%s' "$PRESTAFLOW_SUITES" | awk -F, '{for(i=1;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i); if($i!="") printf "%s`%s`", (i>1?", ":""), $i}}')
           META_PARTS+=("Suites: $QUOTED")
         fi
-        if [ "${PRESTAFLOW_FLASHLIGHT:-false}" = "true" ] && [ -n "${PRESTAFLOW_PS_VERSION:-}" ]; then
-          META_PARTS+=("PS \`${PRESTAFLOW_PS_VERSION}\`")
+        if [ "${PRESTAFLOW_FLASHLIGHT:-false}" = "true" ] && [ -n "${PRESTAFLOW_FLASHLIGHT_TAG:-}" ]; then
+          META_PARTS+=("PS \`${PRESTAFLOW_FLASHLIGHT_TAG}\`")
         fi
         META_LINE=""
         if [ ${#META_PARTS[@]} -gt 0 ]; then

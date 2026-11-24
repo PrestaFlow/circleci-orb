@@ -1,7 +1,9 @@
 description: |
   Run `composer run prestaflow:json:file`. Skipped when no composer.json is
   present. A non-zero exit is surfaced but does NOT abort the job — failures
-  are reported through the API + PR comment.
+  are reported through the API + PR comment. After the flashlight command, the
+  PRESTAFLOW_* variables it wrote to .env.local are removed from composer's
+  environment so that the library reads them from the file.
 
 parameters:
   suites:
@@ -14,20 +16,4 @@ steps:
         echo 'export PRESTAFLOW_SUITES="<< parameters.suites >>"' >> "$BASH_ENV"
   - run:
       name: "PrestaFlow: run tests"
-      command: |
-        set -euo pipefail
-        if [ ! -f composer.json ]; then
-          echo "run-tests: no composer.json — skipping"; exit 0
-        fi
-        if ! command -v composer >/dev/null 2>&1; then
-          echo "run-tests: composer not installed — use install-deps with install_composer=true or a composer-capable executor"
-          exit 1
-        fi
-        echo "run-tests: composer run prestaflow:json:file (suites=${PRESTAFLOW_SUITES:-<all>})"
-        set +e
-        composer run prestaflow:json:file
-        RC=$?
-        set -e
-        if [ $RC -ne 0 ]; then
-          echo "run-tests: composer exited $RC — parsing/uploading results anyway"
-        fi
+      command: <<include(scripts/run-tests.sh)>>

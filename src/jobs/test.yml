@@ -34,6 +34,9 @@ parameters:
   flashlight_init_scripts:
     type: string
     default: ""
+  flashlight_install_module:
+    type: boolean
+    default: true
   pr_comment:
     type: string
     default: ""
@@ -58,6 +61,7 @@ steps:
       ps_version: << parameters.ps_version >>
       flashlight_mount: << parameters.flashlight_mount >>
       flashlight_init_scripts: << parameters.flashlight_init_scripts >>
+      flashlight_install_module: << parameters.flashlight_install_module >>
       pr_comment: << parameters.pr_comment >>
       upload_artifacts: << parameters.upload_artifacts >>
       visual: << parameters.visual >>

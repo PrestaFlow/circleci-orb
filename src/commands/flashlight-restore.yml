@@ -1,0 +1,11 @@
+description: |
+  Put the repository's .env.local back after the flashlight command merged it
+  into the generated one (or remove the generated file when the repository had
+  none). Idempotent; `push` runs it with `when: always`. Call it at the end of
+  your own job when you compose `flashlight` and `run-tests` yourself.
+
+steps:
+  - run:
+      name: "PrestaFlow: restore .env.local"
+      when: always
+      command: <<include(scripts/flashlight-restore.sh)>>

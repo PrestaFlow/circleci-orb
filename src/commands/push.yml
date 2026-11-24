@@ -31,7 +31,7 @@ parameters:
     type: boolean
     default: false
   ps_version:
-    description: "Flashlight image tag (9.0.0, 8.1.7, latest)"
+    description: "Flashlight image tag (9.0.0, 8.2.8-nginx, latest). The PrestaShop version given to the tests (PRESTAFLOW_PS_VERSION) is read from it, or from the image for a tag without a version."
     type: string
     default: "latest"
   flashlight_mount:
@@ -42,6 +42,10 @@ parameters:
     description: "Path to init scripts dir (mounted read-only at /tmp/init-scripts)"
     type: string
     default: ""
+  flashlight_install_module:
+    description: "When composer.json is a prestashop-module, run `php bin/console prestashop:module install <name>` in Flashlight once the shop is ready. A failed install only warns."
+    type: boolean
+    default: true
   pr_comment:
     description: "empty=auto (on PR jobs), 'true' to force, 'false' to skip"
     type: string
@@ -89,6 +93,7 @@ steps:
             ps_version: << parameters.ps_version >>
             mount: << parameters.flashlight_mount >>
             init_scripts: << parameters.flashlight_init_scripts >>
+            install_module: << parameters.flashlight_install_module >>
   - when:
       condition: << parameters.visual >>
       steps:
@@ -130,4 +135,8 @@ steps:
         - store_artifacts:
             path: .prestaflow-artifacts
             destination: prestaflow
+  - when:
+      condition: << parameters.flashlight >>
+      steps:
+        - flashlight-restore
   - set-outputs
