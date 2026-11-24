@@ -18,7 +18,7 @@ the backend), same PR/MR comment format.
 ```yaml
 version: 2.1
 orbs:
-  prestaflow: prestaflow/prestaflow@0.2.0
+  prestaflow: prestaflow/prestaflow@0.2.1
 ```
 
 While iterating, use the dev channel:
@@ -35,7 +35,7 @@ orbs:
 ```yaml
 version: 2.1
 orbs:
-  prestaflow: prestaflow/prestaflow@0.2.0
+  prestaflow: prestaflow/prestaflow@0.2.1
 
 workflows:
   test:
@@ -58,7 +58,7 @@ CircleCI project or an org context.
 ```yaml
 version: 2.1
 orbs:
-  prestaflow: prestaflow/prestaflow@0.2.0
+  prestaflow: prestaflow/prestaflow@0.2.1
 
 jobs:
   test:
@@ -231,8 +231,8 @@ circleci orb validate orb.yml
 circleci orb publish orb.yml prestaflow/prestaflow@dev:first
 
 # Promote to production on a tag
-git tag v0.2.0 && git push --tags
-circleci orb publish orb.yml prestaflow/prestaflow@0.2.0
+git tag v0.2.1 && git push --tags
+circleci orb publish orb.yml prestaflow/prestaflow@0.2.1
 ```
 
 CI (`.circleci/config.yml`) uses `circleci/orb-tools` to lint, pack, review,
