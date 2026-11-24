@@ -23,13 +23,10 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Pack + validate
-        run: |
-          set -euo pipefail
-          circleci orb pack src/ > orb.yml
-          circleci orb validate orb.yml
-
-      - name: Configure CircleCI CLI
+      # `orb validate` calls the CircleCI API too, so the token is checked
+      # first and passed to every CLI call (no `circleci setup`, which is
+      # interactive).
+      - name: Check CircleCI token
         env:
           CIRCLECI_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
         run: |
@@ -38,11 +35,20 @@ jobs:
             echo "::error::CIRCLECI_TOKEN secret not set. Create a personal API token at https://app.circleci.com/settings/user/tokens and add it as CIRCLECI_TOKEN in this repo's secrets."
             exit 1
           fi
-          circleci setup --token "$CIRCLECI_TOKEN" --host "https://circleci.com" || true
+
+      - name: Pack + validate
+        env:
+          CIRCLECI_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+          CIRCLE_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+        run: |
+          set -euo pipefail
+          circleci orb pack src/ > orb.yml
+          circleci orb validate orb.yml --token "$CIRCLECI_TOKEN"
 
       - name: Publish orb
         env:
           CIRCLECI_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+          CIRCLE_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
         run: |
           set -euo pipefail
           # Namespace must exist first (one-time manual step):
