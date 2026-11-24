@@ -2,7 +2,7 @@
 
 All notable changes to the PrestaFlow CircleCI Orb are documented here.
 
-## [Unreleased]
+## [0.2.1] — 2026-11-24
 
 ### Fixed
 - **Version from the shop's sources on PrestaShop 8 and 9.** For a Flashlight
