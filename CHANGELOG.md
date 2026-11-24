@@ -2,7 +2,7 @@
 
 All notable changes to the PrestaFlow CircleCI Orb are documented here.
 
-## [0.2.0] — Unreleased
+## [0.2.0] — 2026-11-24
 
 Flashlight fixes of the GitHub Action v2.3.0 to v2.4.1, for
 `prestaflow/php-library` 1.9.0.
